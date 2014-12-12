@@ -1,0 +1,88 @@
+module sleep
+    use cudadevice
+    use cudafor
+    implicit none
+ 
+    integer, dimension(:), allocatable :: streams
+ 
+    contains
+ 
+    !CUDA kernel to pause for at least num_cycle cycles
+    attributes(global) subroutine sleep(num_cycles)
+        integer(8), value :: num_cycles
+        integer(8) :: cycles
+        integer(8) :: start
+ 
+        cycles = 0
+        start = clock64
+        do while (cycles < num_cycles)
+            cycles = clock64 - start
+        enddo
+    end subroutine sleep
+ 
+    !Returns number of cycles required for requested seconds
+    integer(8) function get_cycles(seconds) result(num_cycles)
+        real(8), intent(in) :: seconds
+        integer(8) :: istat, Hz
+        type(cudadeviceprop) :: prop
+ 
+        istat = cudaGetDeviceProperties(prop, 0)
+        Hz = prop%clockRate * 1000
+        num_cycles = seconds * Hz
+    end function get_cycles
+ 
+    !Create streams
+    subroutine create_streams(num_streams)
+        integer :: num_streams, istat, i
+ 
+        allocate(streams(num_streams+1))
+
+        streams(1) = 0 
+
+        ! Primer kernel launch
+        call sleep<<< 1, 1 >>>(int8(1));
+
+        do i=2,num_streams+1
+            istat = cudaStreamCreate(streams(i))
+        enddo
+    end subroutine create_streams
+ 
+    !Launches a kernel that sleeps for num_cycles
+    subroutine sleep_kernel(num_cycles, stream_id)
+        integer(8) :: num_cycles
+        integer    ::  stream_id
+        type(dim3) :: blockSize, gridSize
+ 
+        blockSize = dim3(1,1,1)
+        gridSize = dim3(1,1,1)
+ 
+        call sleep<<<gridSize, blockSize, 0, streams(stream_id)>>>(num_cycles)
+    end subroutine sleep_kernel
+ 
+    ! Wait for stream to complete
+    subroutine wait_for_stream(stream_id)
+        integer :: stream_id, istat
+ 
+        istat = cudaStreamSynchronize(streams(stream_id))
+    end subroutine wait_for_stream
+ 
+    ! Wait for streams to complete
+    subroutine wait_for_streams(num_streams)
+        integer :: num_streams, istat, i
+ 
+        do i=2,num_streams+1
+            istat = cudaStreamSynchronize(streams(i))
+        enddo
+    end subroutine wait_for_streams
+ 
+    ! Destroy streams
+    subroutine destroy_streams(num_streams)
+        integer :: num_streams, i, istat
+ 
+        do i=2,num_streams+1
+            istat = cudaStreamDestroy(streams(i))
+        enddo
+        deallocate(streams)
+    end subroutine destroy_streams
+ 
+end module sleep
